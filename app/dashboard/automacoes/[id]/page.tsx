@@ -1,3 +1,4 @@
+//app\dashboard\automacoes\[id]\page.tsx
 import { notFound } from "next/navigation";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { AutomationEditor } from "./automation-editor";
@@ -7,7 +8,7 @@ export default async function Page({ params }: PageProps<"/dashboard/automacoes/
   const supabase = await getSupabaseServerClient();
   const { data: { user } } = supabase ? await supabase.auth.getUser() : { data: { user: null } };
   if (!supabase || !user) notFound();
-  const { data: automation } = await supabase.from("automacoes").select("id,nome,gatilho,status,etapa_inicial_id").eq("id", id).eq("user_id", user.id).maybeSingle();
+  const { data: automation } = await supabase.from("automacoes").select("id,nome,gatilho,status,etapa_inicial_id,iniciar_novas_conversas").eq("id", id).eq("user_id", user.id).maybeSingle();
   if (!automation) notFound();
   const [stages, connections, files] = await Promise.all([
     supabase.from("automacao_etapas").select("id,nome,tipo,config,position_x,position_y").eq("automacao_id", id).order("position_y"),
