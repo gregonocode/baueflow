@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, Bot, Check, CircleDollarSign, FileText, Mail, MessageSquareText, Plus, Save, Settings2, Trash2, Video, Zap } from "lucide-react";
+import { ArrowLeft, Bot, Check, CircleDollarSign, FileText, ImageIcon, Mail, MessageSquareText, Plus, Save, Settings2, Trash2, Video, Zap } from "lucide-react";
 import { useState } from "react";
-import { PdfFiles } from "./pdf-files";
+import { MediaFiles } from "./media-files";
 
 type Config = Record<string, unknown>;
 type S = { id: string; nome: string; tipo: string; config: Config; position_y: number };
@@ -12,7 +12,7 @@ type F = { id: string; etapa_id: string; nome: string };
 type A = { id: string; nome: string; gatilho: string | null; status: string; etapa_inicial_id: string | null; iniciar_novas_conversas: boolean };
 type Option = { id: string; label: string };
 
-const meta = { mensagem: MessageSquareText, video: Video, arquivo: FileText, opcoes: Bot, capturar_email: Mail, acao_api: Settings2, pix: CircleDollarSign, espera: Zap, fim: Check };
+const meta = { mensagem: MessageSquareText, video: Video, imagem: ImageIcon, arquivo: FileText, opcoes: Bot, capturar_email: Mail, acao_api: Settings2, pix: CircleDollarSign, espera: Zap, fim: Check };
 const kinds = Object.keys(meta);
 const input = "mt-1 h-10 w-full rounded-xl border border-[#d8e4dc] bg-white px-3 text-sm outline-none focus:border-[#286342]";
 
@@ -20,6 +20,7 @@ function initialConfig(tipo: string): Config {
   switch (tipo) {
     case "video": return { url: "", caption: "" };
     case "arquivo": return { caption: "" };
+    case "imagem": return { caption: "" };
     case "opcoes": return { texto: "", opcoes: [] };
     case "capturar_email": return { mensagem: "", validar: true, mensagem_invalida: "" };
     case "acao_api": return { url: "", method: "POST", headers: {}, body: {} };
@@ -36,6 +37,10 @@ function optionsOf(config: Config): Option[] {
 function preview(stage: S, files: F[]) {
   const c = stage.config;
   if (stage.tipo === "video") return String(c.caption || c.url || "Configure esta etapa.");
+  if (stage.tipo === "imagem") {
+    const count = files.filter(file => file.etapa_id === stage.id).length;
+    return `${count} ${count === 1 ? "imagem configurada" : "imagens configuradas"}${c.caption ? ` · ${String(c.caption)}` : ""}`;
+  }
   if (stage.tipo === "arquivo") return files.filter(file => file.etapa_id === stage.id).map(file => file.nome).join(", ") || "Nenhum arquivo associado.";
   if (stage.tipo === "opcoes") return `${optionsOf(c).length} opções configuradas`;
   if (stage.tipo === "acao_api") return `${String(c.method || "POST")} ${String(c.url || "")}`.trim();
@@ -68,7 +73,7 @@ export function AutomationEditor({ automation: seed, stages, connections: seedEd
         ...previous.filter(option => !current.some(currentOption => currentOption.id === option.id)).map(option => setEdge(stageId, option.id, "", option.label)),
       ]);
     }
-    if (!edit && stage.tipo === "arquivo" && stageId) {
+    if (!edit && (stage.tipo === "arquivo" || stage.tipo === "imagem") && stageId) {
       setEdit({ ...stage, id: stageId });
       return;
     }
@@ -79,7 +84,7 @@ export function AutomationEditor({ automation: seed, stages, connections: seedEd
     <section className="rounded-2xl border border-[#dfede3] bg-[#fbfefc] p-5"><div className="grid gap-4 sm:grid-cols-2"><label>Nome<input value={a.nome} onChange={e => setA({ ...a, nome: e.target.value })} className={input} /></label><label>Status<select value={a.status} onChange={e => setA({ ...a, status: e.target.value })} className={input}><option value="rascunho">Rascunho</option><option value="ativa">Ativa</option><option value="pausada">Pausada</option></select></label></div><label className="mt-4 flex gap-3 rounded-xl border p-3"><input type="checkbox" checked={a.iniciar_novas_conversas} onChange={e => setA({ ...a, iniciar_novas_conversas: e.target.checked })} /><span><b>Iniciar automaticamente em novas conversas</b><small className="block">Quando um novo contato enviar a primeira mensagem, esta automação será iniciada.</small></span></label><label className="mt-4 block">Gatilho opcional<small className="block">Use apenas para iniciar uma automação específica por mensagem.</small><input value={a.gatilho ?? ""} onChange={e => setA({ ...a, gatilho: e.target.value })} className={input} /></label></section>
     <div className="mt-8 flex justify-between"><h2 className="text-xl font-bold">FLUXO DA AUTOMAÇÃO</h2><button onClick={() => setEdit(null)} className="rounded-xl bg-[#e2f2e7] px-4 py-2 text-sm font-semibold text-[#286342]"><Plus className="mr-2 inline size-4" />Adicionar etapa</button></div>
     <div className="mt-5 space-y-3">{stages.map((stage, i) => { const Icon = meta[stage.tipo as keyof typeof meta] ?? Bot; const edge = (key: string) => edges.find(item => item.origem_etapa_id === stage.id && item.chave_saida === key)?.destino_etapa_id ?? ""; return <section key={stage.id} className="rounded-2xl border border-[#dfede3] bg-[#fbfefc] p-5"><div className="flex gap-4"><Icon className="size-5 text-[#286342]" /><div><p className="text-xs font-bold text-[#3f7655]">{String(i + 1).padStart(2, "0")} · {stage.tipo.toUpperCase()}</p><h3 className="font-semibold">{stage.nome}{a.etapa_inicial_id === stage.id && <span className="ml-2 rounded bg-[#e3f4e8] px-2 text-xs">INICIAL</span>}</h3><p className="text-sm text-[#858c9c]">{preview(stage, files)}</p></div></div><div className="mt-4 flex flex-wrap gap-2 border-t pt-4">{stage.tipo === "opcoes" ? optionsOf(stage.config).map(option => <Select key={option.id} label={option.label} value={edge(option.id)} stages={stages} currentStageId={stage.id} change={value => setEdge(stage.id, option.id, value, option.label)} />) : stage.tipo !== "fim" && <Select label="Próxima etapa" value={edge("default")} stages={stages} currentStageId={stage.id} change={value => setEdge(stage.id, "default", value, "default")} />}{a.etapa_inicial_id === stage.id ? <span className="self-end px-3 py-2 text-sm font-medium text-[#286342]">Etapa inicial</span> : <button onClick={() => api({ action: "set-initial", stageId: stage.id }).then(() => setA({ ...a, etapa_inicial_id: stage.id }))}>Definir como inicial</button>}<button onClick={() => setEdit(stage)}>Editar</button><button onClick={() => { if (confirm("Excluir etapa?")) api({ action: "delete-stage", stageId: stage.id }).then(() => location.reload()); }}><Trash2 className="size-4 text-red-600" /></button></div></section>; })}</div>
-    {edit !== undefined && <Modal automationId={a.id} stage={edit} stages={stages} edges={edges} close={() => { if (edit?.tipo === "arquivo") location.reload(); else setEdit(undefined); }} save={saveStage} />}
+    {edit !== undefined && <Modal automationId={a.id} stage={edit} stages={stages} edges={edges} close={() => { if (edit?.tipo === "arquivo" || edit?.tipo === "imagem") location.reload(); else setEdit(undefined); }} save={saveStage} />}
   </div>;
 }
 
@@ -95,7 +100,7 @@ function Modal({ automationId, stage, stages, edges, close, save }: { automation
   const saveModal = async () => {
     if (saving || filesBusy) return;
     setJsonError("");
-    let nextConfig = tipo === "arquivo" ? { caption: String(config.caption ?? "") } : config;
+    let nextConfig = tipo === "arquivo" || tipo === "imagem" ? { caption: String(config.caption ?? "") } : config;
     if (tipo === "acao_api") {
       try { nextConfig = { ...config, body: JSON.parse(bodyText || "{}"), headers: JSON.parse(headersText || "{}") }; }
       catch { setJsonError("Body e headers precisam conter JSON válido."); return; }
@@ -115,11 +120,11 @@ function Modal({ automationId, stage, stages, edges, close, save }: { automation
         <label className="mt-3 block text-sm font-medium">Nome da etapa<input value={nome} onChange={e => setNome(e.target.value)} className={input} placeholder={tipo} /></label>
         <StageFields tipo={tipo} config={config} update={update} options={options} setOptions={value => update("opcoes", value)} destinations={destinations} setDestinations={setDestinations} stages={stages} currentStageId={stage?.id ?? ""} bodyText={bodyText} setBodyText={setBodyText} headersText={headersText} setHeadersText={setHeadersText} />
       </fieldset>
-      {tipo === "arquivo" && <PdfFiles key={stage?.id ?? "new"} automationId={automationId} stageId={stage?.id} disabled={saving} onBusyChange={setFilesBusy} />}
+      {(tipo === "arquivo" || tipo === "imagem") && <MediaFiles key={`${tipo}-${stage?.id ?? "new"}`} kind={tipo} automationId={automationId} stageId={stage?.id} disabled={saving} onBusyChange={setFilesBusy} />}
       {jsonError && <p role="alert" className="mt-3 text-sm text-red-600">{jsonError}</p>}
       <div className="mt-6 flex justify-end gap-3">
-        <button disabled={saving || filesBusy} onClick={close} className="disabled:opacity-50">{tipo === "arquivo" && stage ? "Fechar" : "Cancelar"}</button>
-        <button disabled={saving || filesBusy} onClick={saveModal} className="rounded-xl bg-[#286342] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Salvando..." : tipo === "arquivo" && !stage ? "Salvar e adicionar PDFs" : "Salvar etapa"}</button>
+        <button disabled={saving || filesBusy} onClick={close} className="disabled:opacity-50">{(tipo === "arquivo" || tipo === "imagem") && stage ? "Fechar" : "Cancelar"}</button>
+        <button disabled={saving || filesBusy} onClick={saveModal} className="rounded-xl bg-[#286342] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Salvando..." : tipo === "imagem" && !stage ? "Salvar e adicionar imagens" : tipo === "arquivo" && !stage ? "Salvar e adicionar PDFs" : "Salvar etapa"}</button>
       </div>
     </div>
   </div>;
@@ -129,7 +134,7 @@ function StageFields({ tipo, config, update, options, setOptions, destinations, 
   const text = (label: string, key: string, multiline = false) => <label className="mt-3 block text-sm font-medium text-[#394150]">{label}{multiline ? <textarea value={String(config[key] ?? "")} onChange={e => update(key, e.target.value)} className="mt-1 min-h-28 w-full rounded-xl border border-[#d8e4dc] p-3 text-sm" /> : <input value={String(config[key] ?? "")} onChange={e => update(key, e.target.value)} className={input} />}</label>;
   if (tipo === "mensagem") return <>{text("Mensagem", "texto", true)}<p className="mt-2 text-xs text-[#6f7888]">Variáveis disponíveis: {"{{nome}}"} · {"{{telefone}}"} · {"{{email}}"}</p></>;
   if (tipo === "video") return <>{text("URL do vídeo", "url")}{text("Legenda opcional", "caption", true)}</>;
-  if (tipo === "arquivo") return text("Legenda opcional", "caption", true);
+  if (tipo === "arquivo" || tipo === "imagem") return text("Legenda opcional", "caption", true);
   if (tipo === "opcoes") return <><label className="mt-3 block text-sm font-medium">Pergunta<textarea value={String(config.texto ?? "")} onChange={e => update("texto", e.target.value)} className="mt-1 min-h-24 w-full rounded-xl border border-[#d8e4dc] p-3 text-sm" /></label><p className="mt-4 text-sm font-semibold">Opções</p>{options.map((option, index) => <div key={`${option.id}-${index}`} className="mt-2 rounded-xl border p-3"><label className="block text-sm">Texto<input value={option.label} onChange={e => setOptions(options.map((item, position) => position === index ? { ...item, label: e.target.value } : item))} className={input} /></label><label className="mt-2 block text-sm">ID interno<input value={option.id} readOnly className={`${input} bg-[#f4f7f5] text-[#6f7888]`} /></label><Select label="Próxima etapa" value={destinations[option.id] ?? ""} stages={stages} currentStageId={currentStageId} change={value => setDestinations({ ...destinations, [option.id]: value })} /><button type="button" onClick={() => { setOptions(options.filter((_, position) => position !== index)); const next = { ...destinations }; delete next[option.id]; setDestinations(next); }} className="mt-3 text-sm text-red-600">Remover</button></div>)}<button type="button" onClick={() => { const nextNumber = Math.max(0, ...options.map(option => Number(option.id.replace(/^opcao_/, "")) || 0)) + 1; const id = `opcao_${nextNumber}`; setOptions([...options, { id, label: "" }]); }} className="mt-3 text-sm font-semibold text-[#286342]">+ Adicionar opção</button></>;
   if (tipo === "capturar_email") return <>{text("Mensagem para pedir e-mail", "mensagem", true)}<label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={Boolean(config.validar)} onChange={e => update("validar", e.target.checked)} />Validar e-mail</label>{text("Mensagem caso seja inválido", "mensagem_invalida", true)}</>;
   if (tipo === "acao_api") return <><label className="mt-3 block text-sm">URL<input value={String(config.url ?? "")} onChange={e => update("url", e.target.value)} className={input} /></label><label className="mt-3 block text-sm">Método<select value={String(config.method ?? "POST")} onChange={e => update("method", e.target.value)} className={input}><option>POST</option><option>PUT</option><option>PATCH</option></select></label><label className="mt-3 block text-sm">Body JSON<textarea value={bodyText} onChange={e => setBodyText(e.target.value)} className="mt-1 min-h-28 w-full rounded-xl border p-3 font-mono text-sm" /></label><label className="mt-3 block text-sm">Headers JSON opcional<textarea value={headersText} onChange={e => setHeadersText(e.target.value)} className="mt-1 min-h-24 w-full rounded-xl border p-3 font-mono text-sm" /></label><p className="mt-2 text-xs text-[#6f7888]">Variáveis possíveis: {"{{email}}"} · {"{{telefone}}"} · {"{{nome}}"}</p></>;

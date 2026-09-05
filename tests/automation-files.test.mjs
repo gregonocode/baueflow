@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { handleAutomationFiles } from "../lib/automacoes/files.ts";
 import { MAX_PDF_BYTES, sanitizedPdfName, validatePdf } from "../lib/automacoes/pdf.ts";
+import { MAX_IMAGE_BYTES, sanitizedImageName, validateImage } from "../lib/automacoes/image.ts";
 
 // Simula falhas independentes do banco e do Storage, além dos filtros de acesso.
 function setup(faults = {}) {
@@ -69,6 +70,88 @@ function setup(faults = {}) {
   return { request, tables, objects, calls };
 }
 const pdf = (name = "material.pdf", content = "%PDF-1.7\nconteúdo") => new File([content], name, { type: "application/pdf" });
+const imageContents = {
+  "image/png": new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
+  "image/jpeg": new Uint8Array([255, 216, 255, 224]),
+  "image/webp": new TextEncoder().encode("RIFF0000WEBP"),
+};
+const image = (name = "foto.png", type = "image/png") => new File([imageContents[type]], name, { type });
+
+test("imagem: limite de 10 MB, extensão correspondente ao MIME e path seguro", () => {
+  for (const [name, type] of [["foto.PNG", "image/png"], ["foto.jpg", "image/jpeg"], ["foto.JPEG", "image/jpeg"], ["foto.webp", "image/webp"]]) {
+    assert.equal(validateImage({ name, type, size: MAX_IMAGE_BYTES }), null);
+    assert.ok(validateImage({ name, type, size: MAX_IMAGE_BYTES + 1 }));
+  }
+  assert.ok(validateImage({ name: "foto.jpg", type: "image/png", size: 10 }));
+  assert.ok(validateImage({ name: "foto.svg", type: "image/svg+xml", size: 10 }));
+  assert.ok(validateImage({ name: "foto.gif", type: "image/gif", size: 10 }));
+  assert.ok(validateImage({ name: "foto.png", type: "image/png", size: 0 }));
+  assert.equal(sanitizedImageName("../../foto de verão ?.JPEG"), "foto-de-verao.jpeg");
+});
+
+test("API de imagem salva PNG/JPEG/WebP, ordem, URL e MIME; permite listar e remover", async () => {
+  const env = setup();
+  env.tables.automacao_etapas[0].tipo = "imagem";
+  for (const [name, type] of [["foto.png", "image/png"], ["foto.jpg", "image/jpeg"], ["foto.jpeg", "image/jpeg"], ["foto.webp", "image/webp"], ["foto.png", "image/png"]]) {
+    const file = image(name, type);
+    const response = await env.request("POST", file);
+    assert.equal(response.status, 201);
+    const row = (await response.json()).file;
+    assert.equal(row.tipo, "imagem");
+    assert.equal(row.mime_type, type);
+    assert.equal(row.tamanho_bytes, file.size);
+    assert.equal(row.ordem, env.objects.size);
+    assert.equal(row.nome, name);
+    assert.ok(row.storage_path.startsWith("user/automation/stage/"));
+    assert.ok(row.storage_path.endsWith(`-${name}`));
+    assert.equal(row.public_url, `https://storage.test/${row.storage_path}`);
+  }
+  assert.equal(env.objects.size, 5);
+  assert.equal(env.tables.automacao_etapas[0].config, undefined);
+  const files = (await (await env.request("GET")).json()).files;
+  assert.equal(files.length, 5);
+  assert.equal((await env.request("DELETE", null, `&arquivo_id=${files[0].id}`)).status, 200);
+  assert.equal(env.objects.size, 4);
+  assert.equal(env.tables.automacao_arquivos.length, 4);
+});
+
+test("API rejeita imagem inválida, acima de 10 MB e PDF em etapa imagem", async () => {
+  const env = setup();
+  env.tables.automacao_etapas[0].tipo = "imagem";
+  for (const file of [pdf(), image("foto.jpg", "image/png"), new File(["invalid"], "foto.png", { type: "image/png" }), new File([new Uint8Array(MAX_IMAGE_BYTES + 1)], "foto.png", { type: "image/png" })]) {
+    assert.equal((await env.request("POST", file)).status, 400);
+  }
+  assert.equal(env.calls.length, 0);
+  assert.equal(env.tables.automacao_arquivos.length, 0);
+  env.tables.automacao_etapas[0].tipo = "arquivo";
+  assert.equal((await env.request("POST", image())).status, 400);
+});
+
+test("API de imagem mantém validação de propriedade e recuperação de falhas", async () => {
+  for (const faults of [{ unauthenticated: true }, { upload: true }, { insert: true }]) {
+    const env = setup(faults);
+    env.tables.automacao_etapas[0].tipo = "imagem";
+    assert.ok((await env.request("POST", image())).status >= 400);
+    assert.equal(env.objects.size, 0);
+    assert.equal(env.tables.automacao_arquivos.length, 0);
+  }
+  const foreign = setup();
+  foreign.tables.automacao_etapas[0].tipo = "imagem";
+  foreign.tables.automacoes[0].user_id = "other";
+  assert.equal((await foreign.request("POST", image())).status, 404);
+  foreign.tables.automacoes[0].user_id = "user";
+  foreign.tables.automacao_etapas[0].automacao_id = "other";
+  assert.equal((await foreign.request("POST", image())).status, 404);
+  for (const faults of [{ remove: true }, { delete: true }]) {
+    const env = setup(faults);
+    env.tables.automacao_etapas[0].tipo = "imagem";
+    const file = (await (await env.request("POST", image())).json()).file;
+    assert.equal((await env.request("DELETE", null, `&arquivo_id=${file.id}`)).status, 500);
+    assert.equal(env.tables.automacao_arquivos.length, 1);
+    assert.equal(env.objects.size, 1);
+    assert.deepEqual(await env.objects.get(file.storage_path).arrayBuffer(), await image().arrayBuffer());
+  }
+});
 
 test("PDF: valida MIME, extensão, conteúdo vazio e limite exato de 20 MB", () => {
   assert.equal(validatePdf({ name: "arquivo.PDF", type: "application/pdf", size: MAX_PDF_BYTES }), null);

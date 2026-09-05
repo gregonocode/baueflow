@@ -119,6 +119,62 @@ function request(message, id = "in-1", extra = {}) {
 }
 const execute = (extra = {}) => executarAutomacao({ conversaId: "conversation-1", ...extra });
 
+for (const imageFirst of [true, false]) {
+  test(`fluxo pelo webhook com imagem ${imageFirst ? "inicial" : "após mensagem"}: envia em ordem e finaliza`, async () => {
+    const imageStage = imageFirst ? "start" : "images";
+    const messageStage = imageFirst ? "message" : "start";
+    stage(imageStage, "imagem", { caption: "Confira, {{nome}}!" });
+    stage(messageStage, "mensagem", { texto: "Mensagem de apoio" });
+    stage("end", "fim");
+    edge("start", imageFirst ? messageStage : imageStage);
+    edge(imageFirst ? messageStage : imageStage, "end");
+    tables.automacao_arquivos.push(
+      { automacao_id: "automation-1", etapa_id: imageStage, ordem: 2, nome: "segunda.webp", tipo: "imagem", public_url: "https://storage.test/segunda.webp" },
+      { automacao_id: "automation-1", etapa_id: imageStage, ordem: 1, nome: "primeira.jpg", tipo: "imagem", public_url: "https://storage.test/primeira.jpg" },
+      { automacao_id: "other", etapa_id: imageStage, ordem: 0, nome: "alheia.png", tipo: "imagem", public_url: "https://storage.test/alheia.png" },
+      { automacao_id: "automation-1", etapa_id: "other", ordem: 0, nome: "outra.png", tipo: "imagem", public_url: "https://storage.test/outra.png" },
+    );
+    assert.equal((await POST(request("Olá"))).status, 200);
+    const medias = sends.filter(send => send.body.mediatype === "image");
+    assert.equal(medias.length, 2);
+    assert.equal(medias[0].path, "/message/sendMedia/instancia-1");
+    assert.deepEqual(medias.map(send => send.body.media), ["https://storage.test/primeira.jpg", "https://storage.test/segunda.webp"]);
+    assert.equal(medias[0].body.caption, "Confira, Tiago!");
+    assert.equal(medias[1].body.caption, undefined);
+    assert.equal(sends[imageFirst ? 2 : 0].body.text, "Mensagem de apoio");
+    assert.equal(tables.whatsapp_conversas[0].status, "finalizada");
+    const outgoing = tables.whatsapp_mensagens.filter(row => row.direcao === "saida" && row.tipo === "imagem");
+    assert.equal(outgoing.length, 2);
+    assert.ok(outgoing.every(row => row.status === "enviada" && row.external_message_id.startsWith("out-")));
+    assert.equal(outgoing[0].payload.etapa_id, imageStage);
+  });
+}
+
+test("imagem sem arquivos ou com arquivo inválido marca erro sem avançar", async () => {
+  const convo = conversation();
+  stage("start", "imagem"); stage("end", "fim"); edge("start", "end");
+  await assert.rejects(execute(), /sem imagens associadas/);
+  assert.equal(convo.etapa_atual_id, "start");
+  assert.equal(convo.dados.estado, "erro");
+  assert.equal(convo.dados.etapa_erro_id, "start");
+  assert.equal(sends.length, 0);
+  tables.automacao_arquivos.push({ automacao_id: "automation-1", etapa_id: "start", ordem: 1, tipo: "pdf", public_url: "https://storage.test/a.pdf" });
+  convo.dados.estado = "iniciada"; // Simula retomada manual após o erro anterior.
+  await assert.rejects(execute(), /imagem inválida/);
+  assert.equal(sends.length, 0);
+});
+
+test("falha no envio de imagem não registra saída nem avança", async () => {
+  const convo = conversation();
+  stage("start", "imagem"); stage("end", "fim"); edge("start", "end");
+  tables.automacao_arquivos.push({ automacao_id: "automation-1", etapa_id: "start", ordem: 1, tipo: "imagem", public_url: "https://storage.test/a.png" });
+  faults.sendStatus = 500;
+  await assert.rejects(execute(), /Falha no envio/);
+  assert.equal(convo.etapa_atual_id, "start");
+  assert.equal(convo.dados.estado, "erro");
+  assert.equal(tables.whatsapp_mensagens.filter(row => row.direcao === "saida").length, 0);
+});
+
 test("funil completo pelo webhook: mensagem → vídeo → opções → arquivos → email → API → fim", async () => {
   stage("start", "mensagem", { texto: "Olá {{nome}} / {{email}}" });
   stage("video", "video", { url: "https://storage.test/demo.mp4", caption: "Para {{nome}}" });

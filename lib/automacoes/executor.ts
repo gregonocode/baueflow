@@ -170,7 +170,7 @@ export async function executarAutomacao({ conversaId, mensagemRecebida, isNewCon
       await renewConversationLock(db, conversaId, token);
       const renderedCaption = substituirVariaveis(caption, activeConversation);
       const sent = await sendMedia({ instance, number: activeConversation.telefone, mediaUrl, mediaType, fileName, caption: renderedCaption });
-      await logSent(sent, mediaType === "video" ? "video" : "documento", renderedCaption, { mediaUrl, fileName });
+      await logSent(sent, mediaType === "image" ? "imagem" : mediaType === "video" ? "video" : "documento", renderedCaption, { mediaUrl, fileName });
     }
 
     async function pause(reason: string) {
@@ -259,6 +259,18 @@ export async function executarAutomacao({ conversaId, mensagemRecebida, isNewCon
         case "video":
           await sendFile(text(config.url), "video", text(config.caption));
           break;
+        case "imagem": {
+          const imagesResult = await db.from("automacao_arquivos").select("nome,tipo,public_url")
+            .eq("etapa_id", stage.id).eq("automacao_id", activeConversation.automacao_id).order("ordem");
+          if (imagesResult.error) throw new ExecutorError("Erro carregando imagens da etapa.");
+          const images = imagesResult.data as File[] | null;
+          if (!images?.length) throw new ExecutorError("Etapa sem imagens associadas.");
+          if (images.some(file => file.tipo !== "imagem" || !file.public_url)) throw new ExecutorError("Etapa contém imagem inválida ou sem URL pública.");
+          for (const [index, file] of images.entries()) {
+            await sendFile(file.public_url, "image", index === 0 ? text(config.caption) : "");
+          }
+          break;
+        }
         case "arquivo": {
           const filesResult = await db.from("automacao_arquivos").select("nome,tipo,public_url")
             .eq("etapa_id", stage.id).eq("automacao_id", activeConversation.automacao_id).order("ordem");

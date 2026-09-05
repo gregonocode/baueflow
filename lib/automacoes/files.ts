@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { MAX_PDF_BYTES, sanitizedPdfName, validatePdf } from "./pdf";
+import { hasImageSignature, MAX_IMAGE_BYTES, sanitizedImageName, validateImage } from "./image";
 
 const bucket = "whatsapp-assets";
 const columns = "id,etapa_id,nome,tipo,public_url,tamanho_bytes,ordem";
@@ -17,7 +18,8 @@ export async function handleAutomationFiles(request: Request, db: SupabaseClient
     if (!automation.data) return fail("Automação não encontrada.", 404);
     const stage = await db.from("automacao_etapas").select("id,tipo").eq("id", stageId).eq("automacao_id", automationId).maybeSingle();
     if (stage.error) return fail("Não foi possível verificar a etapa.", 500);
-    if (!stage.data || stage.data.tipo !== "arquivo") return fail("Etapa de arquivos não encontrada.", 404);
+    if (!stage.data || !["arquivo", "imagem"].includes(stage.data.tipo)) return fail("Etapa de mídia não encontrada.", 404);
+    const isImage = stage.data.tipo === "imagem";
     const storage = db.storage.from(bucket);
 
     if (request.method === "GET") {
@@ -27,30 +29,32 @@ export async function handleAutomationFiles(request: Request, db: SupabaseClient
     }
     if (request.method === "POST") {
       // O limite real é conferido no File; este rejeita corpos grandes antes de ler o multipart.
-      if (Number(request.headers.get("content-length")) > MAX_PDF_BYTES + 1024 * 1024) return fail("Cada PDF deve ter no máximo 20 MB.", 413);
+      if (Number(request.headers.get("content-length")) > (isImage ? MAX_IMAGE_BYTES : MAX_PDF_BYTES) + 1024 * 1024) return fail(isImage ? "Cada imagem deve ter no máximo 10 MB." : "Cada PDF deve ter no máximo 20 MB.", 413);
       let form: FormData;
-      try { form = await request.formData(); } catch { return fail("Não foi possível ler o PDF enviado."); }
+      try { form = await request.formData(); } catch { return fail("Não foi possível ler o arquivo enviado."); }
       const file = form.get("file");
-      if (!(file instanceof File)) return fail("Selecione um PDF para enviar.");
-      const validation = validatePdf(file);
+      if (!(file instanceof File)) return fail("Selecione um arquivo para enviar.");
+      const validation = isImage ? validateImage(file) : validatePdf(file);
       if (validation) return fail(validation);
-      if (await file.slice(0, 5).text() !== "%PDF-") return fail("O arquivo não contém um PDF válido.");
+      if (isImage) {
+        if (!await hasImageSignature(file)) return fail("O conteúdo não corresponde ao formato da imagem.");
+      } else if (await file.slice(0, 5).text() !== "%PDF-") return fail("O arquivo não contém um PDF válido.");
       const last = await db.from("automacao_arquivos").select("ordem").eq("automacao_id", automationId).eq("etapa_id", stageId)
         .order("ordem", { ascending: false }).limit(1).maybeSingle();
       if (last.error) return fail("Não foi possível organizar os arquivos.", 500);
-      const path = `${user.id}/${automationId}/${stageId}/${crypto.randomUUID()}-${sanitizedPdfName(file.name)}`;
-      const upload = await storage.upload(path, file, { contentType: "application/pdf", upsert: false });
-      if (upload.error) return fail("Não foi possível enviar o PDF. Tente novamente.", 500);
+      const path = `${user.id}/${automationId}/${stageId}/${crypto.randomUUID()}-${isImage ? sanitizedImageName(file.name) : sanitizedPdfName(file.name)}`;
+      const upload = await storage.upload(path, file, { contentType: file.type, upsert: false });
+      if (upload.error) return fail("Não foi possível enviar o arquivo. Tente novamente.", 500);
       const { data: { publicUrl } } = storage.getPublicUrl(path);
       const result = await db.from("automacao_arquivos").insert({
-        automacao_id: automationId, etapa_id: stageId, nome: file.name, tipo: "pdf",
-        storage_path: path, public_url: publicUrl, mime_type: "application/pdf",
+        automacao_id: automationId, etapa_id: stageId, nome: file.name, tipo: isImage ? "imagem" : "pdf",
+        storage_path: path, public_url: publicUrl, mime_type: file.type,
         tamanho_bytes: file.size, ordem: (last.data?.ordem ?? 0) + 1,
       }).select(columns).single();
       if (result.error) {
         const cleanup = await storage.remove([path]);
-        if (cleanup.error) console.error("Falha ao limpar upload de PDF sem registro.", { path });
-        return fail("Não foi possível cadastrar o PDF. Tente novamente.", 500);
+        if (cleanup.error) console.error("Falha ao limpar upload sem registro.", { path });
+        return fail("Não foi possível cadastrar o arquivo. Tente novamente.", 500);
       }
       return Response.json({ file: result.data }, { status: 201 });
     }
@@ -65,17 +69,17 @@ export async function handleAutomationFiles(request: Request, db: SupabaseClient
       if (!path) return fail("Este arquivo não possui um caminho no Storage.");
       // Guarda o conteúdo para restaurar o objeto se a exclusão do registro falhar.
       const backup = await storage.download(path);
-      if (backup.error) return fail("Não foi possível acessar o PDF para remoção. Tente novamente.", 500);
+      if (backup.error) return fail("Não foi possível acessar o arquivo para remoção. Tente novamente.", 500);
       const removed = await storage.remove([path]);
-      if (removed.error) return fail("Não foi possível remover o PDF do Storage.", 500);
+      if (removed.error) return fail("Não foi possível remover o arquivo do Storage.", 500);
       const deleted = await db.from("automacao_arquivos").delete().eq("id", fileId).eq("automacao_id", automationId).eq("etapa_id", stageId).select("id");
       if (deleted.error || !deleted.data?.length) {
         const restored = await storage.upload(path, backup.data, { contentType: result.data.mime_type || "application/pdf", upsert: false });
         if (restored.error) {
-          console.error("Falha ao restaurar PDF após erro na remoção do registro.", { fileId, path });
-          return fail("A remoção ficou incompleta. Não foi possível restaurar o PDF; contate o suporte.", 500);
+          console.error("Falha ao restaurar arquivo após erro na remoção do registro.", { fileId, path });
+          return fail("A remoção ficou incompleta. Não foi possível restaurar o arquivo; contate o suporte.", 500);
         }
-        return fail("Não foi possível remover o registro. O PDF foi preservado; tente novamente.", 500);
+        return fail("Não foi possível remover o registro. O arquivo foi preservado; tente novamente.", 500);
       }
       return Response.json({ ok: true });
     }

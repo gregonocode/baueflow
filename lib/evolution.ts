@@ -1,6 +1,6 @@
 import "server-only";
 
-export type MediaType = "video" | "document";
+export type MediaType = "video" | "document" | "image";
 type Recipient = { instance: string; number: string };
 export type SendMediaInput = Recipient & {
   mediaUrl: string;
@@ -97,7 +97,7 @@ export async function sendMedia({ instance, number, mediaUrl, mediaType, fileNam
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
     throw new Error("URL de mídia inválida.");
   }
-  if (mediaType !== "video" && mediaType !== "document") throw new Error("Tipo de mídia não suportado.");
+  if (mediaType !== "video" && mediaType !== "document" && mediaType !== "image") throw new Error("Tipo de mídia não suportado.");
   return send("sendMedia", instance, {
     number,
     mediatype: mediaType,
