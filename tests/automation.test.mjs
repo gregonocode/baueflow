@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { beforeEach, afterEach, test } from "node:test";
 import { executarAutomacao } from "../lib/automacoes/executor.ts";
-import { sendMedia, sendText } from "../lib/evolution.ts";
+import { sendCopyButton, sendMedia, sendText } from "../lib/evolution.ts";
 import { POST } from "../app/api/evolution/webhook/route.ts";
 
 const originalFetch = globalThis.fetch;
@@ -265,17 +265,63 @@ test("ciclo para no limite de 30 etapas", async () => {
 });
 
 for (const env of ["production", "development"]) {
-  test(`Pix sem gateway em ${env} para sem avançar`, async () => {
+  test(`Pix com botão de copiar em ${env} segue o fluxo sem aguardar pagamento`, async () => {
     process.env.NODE_ENV = env;
-    const convo = conversation(); stage("start", "pix", { mensagem: "Pagamento, {{nome}}", valor_centavos: 1700 });
-    stage("end", "fim", { mensagem: "Pago!" }); edge("start", "end");
+    const convo = conversation();
+    stage("start", "pix", { mensagem: "Obrigado, {{nome}}", descricao: "Seu produto, {{nome}}", valor_centavos: 1700, codigo_pix: "recebedor@example.com" });
+    stage("end", "fim", { mensagem: "Até mais!" }); edge("start", "end");
     await execute();
-    assert.equal(sends.length, env === "production" ? 1 : 2);
-    if (env !== "production") assert.equal(sends[1].body.text, "[PIX pendente de integração: R$ 17,00]");
-    assert.equal(convo.etapa_atual_id, "start"); assert.equal(convo.dados.estado, "pausada");
-    assert.match(logs.join(), /PIX gateway not configured/);
+    assert.equal(sends.length, 2);
+    assert.equal(sends[0].path, "/message/sendButtons/instancia-1");
+    assert.deepEqual(sends[0].body, {
+      number: "5585999999999", title: "Seu produto, Tiago",
+      description: "Obrigado, Tiago\n\nValor: R$ 17,00\n\nPix: recebedor@example.com",
+      buttons: [{ type: "copy", displayText: "Copiar Pix", copyCode: "recebedor@example.com" }],
+    });
+    assert.equal(sends[1].body.text, "Até mais!");
+    assert.equal(convo.status, "finalizada"); assert.equal(convo.etapa_atual_id, null);
+    assert.equal(convo.dados.estado, "finalizada");
+    const outgoing = tables.whatsapp_mensagens[0];
+    assert.equal(outgoing.status, "enviada"); assert.equal(outgoing.external_message_id, "out-1");
+    assert.equal(outgoing.payload.botao.codigo, "recebedor@example.com");
+    assert.ok(!logs.join().includes("gateway"));
   });
 }
+
+test("Pix sem código mantém etapas antigas de texto e avança", async () => {
+  const convo = conversation(); stage("start", "pix", { mensagem: "Pague quando puder, {{nome}}", valor_centavos: 1700 });
+  stage("end", "fim"); edge("start", "end");
+  await execute();
+  assert.equal(sends.length, 1); assert.equal(sends[0].path, "/message/sendText/instancia-1");
+  assert.equal(sends[0].body.text, "Pague quando puder, Tiago");
+  assert.equal(convo.status, "finalizada");
+});
+
+test("conteúdo Copia e Cola não é modificado e texto do botão pode ser configurado", async () => {
+  conversation();
+  const code = "000201-CONTEUDO-Exato-do-Banco-{{nome}}";
+  stage("start", "pix", { codigo_pix: code, texto_botao: "Copiar, {{nome}}" });
+  stage("end", "fim"); edge("start", "end");
+  await execute();
+  assert.equal(sends[0].body.title, "Pagamento via Pix");
+  assert.equal(sends[0].body.buttons[0].copyCode, code);
+  assert.equal(sends[0].body.buttons[0].displayText, "Copiar, Tiago");
+  assert.equal(sends[0].body.description, `Pix: ${code}`);
+});
+
+test("falha do botão Pix não avança nem reenvia por outro endpoint", async () => {
+  const convo = conversation(); stage("start", "pix", { codigo_pix: "recebedor@example.com" });
+  stage("end", "fim", { mensagem: "Até mais" }); edge("start", "end");
+  faults.sendStatus = 400;
+  await assert.rejects(execute());
+  assert.equal(sends.length, 1); assert.equal(convo.etapa_atual_id, "start");
+  assert.equal(convo.dados.estado, "erro"); assert.equal(tables.whatsapp_mensagens.length, 0);
+});
+
+test("botão de cópia rejeita conteúdo vazio antes do envio", async () => {
+  await assert.rejects(sendCopyButton({ instance: "instancia-1", number: "5585999999999", title: "Pix", text: "Pagamento", copyCode: " " }), /Botão de cópia/);
+  assert.equal(sends.length, 0);
+});
 
 test("espera curta avança e espera longa pausa", async () => {
   const convo = conversation(); stage("start", "espera", { segundos: 0.001 }); stage("long", "espera", { segundos: 11 }); edge("start", "long");

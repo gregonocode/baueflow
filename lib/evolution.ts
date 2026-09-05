@@ -23,7 +23,7 @@ function redactResponse(response: string) {
   return sanitized.slice(0, 2_000);
 }
 
-async function send(endpoint: "sendText" | "sendMedia", instance: string, body: Record<string, unknown>): Promise<EvolutionSendResult> {
+async function send(endpoint: "sendText" | "sendMedia" | "sendButtons", instance: string, body: Record<string, unknown>): Promise<EvolutionSendResult> {
   const baseUrl = process.env.EVOLUTION_API_URL;
   const apiKey = process.env.EVOLUTION_API_KEY;
   if (!baseUrl || !apiKey) throw new Error("Evolution API não configurada.");
@@ -74,6 +74,22 @@ async function send(endpoint: "sendText" | "sendMedia", instance: string, body: 
 export async function sendText({ instance, number, text }: Recipient & { text: string }) {
   if (!text.trim()) throw new Error("Texto vazio para envio.");
   return send("sendText", instance, { number, text });
+}
+
+export async function sendCopyButton({ instance, number, title, text, copyCode, buttonText = "Copiar Pix" }: Recipient & {
+  title: string;
+  text: string;
+  copyCode: string;
+  buttonText?: string;
+}) {
+  if (!title.trim() || !copyCode.trim() || !buttonText.trim()) throw new Error("Botão de cópia sem título, conteúdo ou texto.");
+  // No Baileys da tag 2.3.7, copy é convertido em cta_copy com copy_code.
+  return send("sendButtons", instance, {
+    number,
+    title,
+    description: text,
+    buttons: [{ type: "copy", displayText: buttonText, copyCode }],
+  });
 }
 
 export async function sendMedia({ instance, number, mediaUrl, mediaType, fileName, caption }: SendMediaInput) {

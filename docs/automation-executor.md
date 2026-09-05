@@ -41,7 +41,7 @@ O campo `media` recebe diretamente a URL pública do arquivo. Não há download 
 | opcoes | Envia pergunta/menu numerado e para em `aguardando_opcao`. Aceita número, ID exato ou label completo sem distinguir maiúsculas. |
 | capturar_email | Pede e-mail e para em `aguardando_email`. Valida formato simples; `validar: false` desliga a regex conforme a opção do editor. |
 | acao_api | Substitui variáveis em body/headers recursivamente e faz POST/PUT/PATCH com timeout de 15 segundos. Não segue redirects. |
-| pix | Envia a mensagem configurada e pausa. Fora de produção, também informa o valor como pendente. Não há cobrança, código Pix nem avanço para entrega. |
+| pix | Envia a mensagem com botão “Copiar Pix” quando `codigo_pix` está preenchido e segue `default` sem esperar pagamento. Sem código, envia somente `mensagem`. |
 | espera | Aguarda até 10 segundos e segue. Esperas maiores pausam a conversa. |
 | fim | Envia mensagem opcional, finaliza a conversa e limpa a etapa atual. |
 
@@ -62,9 +62,25 @@ renovado antes das etapas e envios, impede execução concorrente da conversa.
 Se ocupado, o webhook retorna `503` antes de salvar a nova entrada.
 
 Falhas de envio, banco, API ou configuração marcam `dados.estado = 'erro'` e
-preservam a etapa. Sem conexão, Pix sem gateway e espera longa usam `pausada`,
+preservam a etapa. Sem conexão e espera longa usam `pausada`,
 com `motivo_pausa`. Novas mensagens não reiniciam automaticamente esses estados.
 O limite de 30 etapas também termina em erro para evitar ciclos infinitos.
+
+## Pix por confiança
+
+No editor, preencher `mensagem`, o título opcional (`descricao`), a chave ou código
+do banco (`codigo_pix`) e, se desejar, `texto_botao` (padrão “Copiar Pix”). O envio
+usa `/message/sendButtons/{instance}` com um botão
+`{ type: 'copy', displayText: 'Copiar Pix', copyCode: codigo_pix }`, implementado
+como `cta_copy` no [Baileys da Evolution 2.3.7](https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts#L2998).
+
+O conteúdo também aparece no texto para cópia manual. `valor_centavos` só informa
+o valor na mensagem; não gera nem altera o código bancário. Não há gateway,
+confirmação de pagamento ou espera pelo clique. Posicionar o Pix depois da entrega
+do produto e conectar sua saída `default` à próxima etapa ou ao fim.
+
+Os envios usam o mesmo comportamento em desenvolvimento e produção. Validar a
+exibição do botão em um WhatsApp real; os testes simulam a resposta HTTP da API.
 
 Não há transação distribuída entre WhatsApp e Postgres: uma queda após envio e
 antes da gravação pode deixar o envio sem registro. A mesma entrada não é

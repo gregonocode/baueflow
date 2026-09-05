@@ -1,6 +1,6 @@
 import "server-only";
 import { setTimeout as sleep } from "node:timers/promises";
-import { sendMedia, sendText, type EvolutionSendResult, type MediaType } from "../evolution";
+import { sendCopyButton, sendMedia, sendText, type EvolutionSendResult, type MediaType } from "../evolution";
 import { getSupabaseAdminClient } from "../supabase/admin";
 import { acquireConversationLock, releaseConversationLock, renewConversationLock } from "./lock";
 
@@ -283,15 +283,25 @@ export async function executarAutomacao({ conversaId, mensagemRecebida, isNewCon
           await callActionApi(config, activeConversation);
           break;
         case "pix": {
-          if (text(config.mensagem).trim()) await sendMessage(text(config.mensagem));
-          if (process.env.NODE_ENV !== "production") {
-            const cents = Number(config.valor_centavos);
-            if (!Number.isSafeInteger(cents) || cents < 0) throw new ExecutorError("Valor Pix inválido.");
-            const amount = (cents / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-            await sendMessage(`[PIX pendente de integração: R$ ${amount}]`);
+          const copyCode = text(config.codigo_pix).trim();
+          if (!copyCode) {
+            // Etapas antigas continuam funcionando como mensagem de pagamento.
+            await sendMessage(text(config.mensagem));
+            break;
           }
-          await pause("PIX gateway not configured");
-          return;
+          const cents = Number(config.valor_centavos ?? 0);
+          if (!Number.isSafeInteger(cents) || cents < 0) throw new ExecutorError("Valor Pix inválido.");
+          const amount = (cents / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const title = substituirVariaveis(text(config.descricao).trim() || "Pagamento via Pix", activeConversation);
+          const message = substituirVariaveis(text(config.mensagem), activeConversation);
+          // Manter o conteúdo visível também no texto, para cópia manual.
+          const description = [message, cents > 0 ? `Valor: R$ ${amount}` : "", `Pix: ${copyCode}`].filter(Boolean).join("\n\n");
+          const buttonText = substituirVariaveis(text(config.texto_botao).trim() || "Copiar Pix", activeConversation);
+          await renewConversationLock(db, conversaId, token);
+          const sent = await sendCopyButton({ instance, number: activeConversation.telefone, title, text: description, copyCode, buttonText });
+          await logSent(sent, "texto", `${title}\n\n${description}`, { botao: { tipo: "copy", texto: buttonText, codigo: copyCode } });
+          // Pagamento na confiança: não espera clique nem confirmação de pagamento.
+          break;
         }
         case "espera": {
           const seconds = Number(config.segundos);

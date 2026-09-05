@@ -22,7 +22,7 @@ function initialConfig(tipo: string): Config {
     case "opcoes": return { texto: "", opcoes: [] };
     case "capturar_email": return { mensagem: "", validar: true, mensagem_invalida: "" };
     case "acao_api": return { url: "", method: "POST", headers: {}, body: {} };
-    case "pix": return { valor_centavos: 0, descricao: "", mensagem: "" };
+    case "pix": return { valor_centavos: 0, descricao: "", mensagem: "", codigo_pix: "", texto_botao: "Copiar Pix" };
     case "espera": return { segundos: 2 };
     case "fim": return { mensagem: "" };
     default: return { texto: "" };
@@ -38,7 +38,7 @@ function preview(stage: S, files: F[]) {
   if (stage.tipo === "arquivo") return files.filter(file => file.etapa_id === stage.id).map(file => file.nome).join(", ") || "Nenhum arquivo associado.";
   if (stage.tipo === "opcoes") return `${optionsOf(c).length} opções configuradas`;
   if (stage.tipo === "acao_api") return `${String(c.method || "POST")} ${String(c.url || "")}`.trim();
-  if (stage.tipo === "pix") return `R$ ${((Number(c.valor_centavos) || 0) / 100).toFixed(2).replace(".", ",")}${c.descricao ? ` · ${c.descricao}` : ""}`;
+  if (stage.tipo === "pix") return `R$ ${((Number(c.valor_centavos) || 0) / 100).toFixed(2).replace(".", ",")}${c.descricao ? ` · ${c.descricao}` : ""}${String(c.codigo_pix ?? "").trim() ? " · Botão de copiar Pix" : " · Somente mensagem"}`;
   if (stage.tipo === "espera") return `Esperar ${Number(c.segundos) || 0} segundos`;
   if (stage.tipo === "fim") return String(c.mensagem || "Finalizar automação");
   return String(c.texto ?? c.mensagem ?? "Configure esta etapa.");
@@ -96,7 +96,18 @@ function StageFields({ tipo, config, update, files, options, setOptions, destina
   if (tipo === "opcoes") return <><label className="mt-3 block text-sm font-medium">Pergunta<textarea value={String(config.texto ?? "")} onChange={e => update("texto", e.target.value)} className="mt-1 min-h-24 w-full rounded-xl border border-[#d8e4dc] p-3 text-sm" /></label><p className="mt-4 text-sm font-semibold">Opções</p>{options.map((option, index) => <div key={`${option.id}-${index}`} className="mt-2 rounded-xl border p-3"><label className="block text-sm">Texto<input value={option.label} onChange={e => setOptions(options.map((item, position) => position === index ? { ...item, label: e.target.value } : item))} className={input} /></label><label className="mt-2 block text-sm">ID interno<input value={option.id} readOnly className={`${input} bg-[#f4f7f5] text-[#6f7888]`} /></label><Select label="Próxima etapa" value={destinations[option.id] ?? ""} stages={stages} currentStageId={currentStageId} change={value => setDestinations({ ...destinations, [option.id]: value })} /><button type="button" onClick={() => { setOptions(options.filter((_, position) => position !== index)); const next = { ...destinations }; delete next[option.id]; setDestinations(next); }} className="mt-3 text-sm text-red-600">Remover</button></div>)}<button type="button" onClick={() => { const nextNumber = Math.max(0, ...options.map(option => Number(option.id.replace(/^opcao_/, "")) || 0)) + 1; const id = `opcao_${nextNumber}`; setOptions([...options, { id, label: "" }]); }} className="mt-3 text-sm font-semibold text-[#286342]">+ Adicionar opção</button></>;
   if (tipo === "capturar_email") return <>{text("Mensagem para pedir e-mail", "mensagem", true)}<label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={Boolean(config.validar)} onChange={e => update("validar", e.target.checked)} />Validar e-mail</label>{text("Mensagem caso seja inválido", "mensagem_invalida", true)}</>;
   if (tipo === "acao_api") return <><label className="mt-3 block text-sm">URL<input value={String(config.url ?? "")} onChange={e => update("url", e.target.value)} className={input} /></label><label className="mt-3 block text-sm">Método<select value={String(config.method ?? "POST")} onChange={e => update("method", e.target.value)} className={input}><option>POST</option><option>PUT</option><option>PATCH</option></select></label><label className="mt-3 block text-sm">Body JSON<textarea value={bodyText} onChange={e => setBodyText(e.target.value)} className="mt-1 min-h-28 w-full rounded-xl border p-3 font-mono text-sm" /></label><label className="mt-3 block text-sm">Headers JSON opcional<textarea value={headersText} onChange={e => setHeadersText(e.target.value)} className="mt-1 min-h-24 w-full rounded-xl border p-3 font-mono text-sm" /></label><p className="mt-2 text-xs text-[#6f7888]">Variáveis possíveis: {"{{email}}"} · {"{{telefone}}"} · {"{{nome}}"}</p></>;
-  if (tipo === "pix") { const reais = ((Number(config.valor_centavos) || 0) / 100).toFixed(2).replace(".", ","); return <><label className="mt-3 block text-sm">Valor<div className="mt-1 flex h-10 items-center rounded-xl border border-[#d8e4dc] px-3"><span className="mr-2 text-sm text-[#6f7888]">R$</span><input value={reais} onChange={e => update("valor_centavos", Number(e.target.value.replace(/\D/g, "") || 0))} className="w-full outline-none" inputMode="decimal" /></div></label>{text("Descrição", "descricao")}{text("Mensagem", "mensagem", true)}</>; }
+  if (tipo === "pix") {
+    const reais = ((Number(config.valor_centavos) || 0) / 100).toFixed(2).replace(".", ",");
+    return <>
+      <label className="mt-3 block text-sm">Valor a informar<div className="mt-1 flex h-10 items-center rounded-xl border border-[#d8e4dc] px-3"><span className="mr-2 text-sm text-[#6f7888]">R$</span><input value={reais} onChange={e => update("valor_centavos", Number(e.target.value.replace(/\D/g, "") || 0))} className="w-full outline-none" inputMode="decimal" /></div></label>
+      {text("Título da mensagem", "descricao")}
+      {text("Mensagem", "mensagem", true)}
+      {text("Chave Pix ou código Copia e Cola", "codigo_pix", true)}
+      <p className="mt-2 text-xs text-[#6f7888]">Cole sua chave Pix ou o código Copia e Cola do banco. O botão copia esse conteúdo; o valor informado acima não altera o código. Deixe vazio para enviar somente a mensagem.</p>
+      {text("Texto do botão (padrão: Copiar Pix)", "texto_botao")}
+      <p className="mt-3 rounded-xl bg-[#f4f7f5] p-3 text-xs text-[#6f7888]">Após enviar, o fluxo segue para a próxima etapa sem aguardar pagamento.</p>
+    </>;
+  }
   if (tipo === "espera") { const seconds = Number(config.segundos) || 0; const minutes = seconds > 0 && seconds % 60 === 0; return <div className="mt-3 grid grid-cols-2 gap-3"><label className="text-sm">Quantidade<input type="number" min="1" value={minutes ? seconds / 60 : seconds} onChange={e => update("segundos", Number(e.target.value || 0) * (minutes ? 60 : 1))} className={input} /></label><label className="text-sm">Unidade<select value={minutes ? "minutos" : "segundos"} onChange={e => update("segundos", e.target.value === "minutos" ? Math.max(1, seconds) * 60 : (minutes ? seconds / 60 : seconds))} className={input}><option value="segundos">segundos</option><option value="minutos">minutos</option></select></label></div>; }
   return text("Mensagem final opcional", "mensagem", true);
 }
